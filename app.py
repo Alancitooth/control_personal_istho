@@ -72,7 +72,7 @@ if "df" in st.session_state:
         ["Inducción", "Certificación", "Exámenes Médicos"],
         default=["Inducción", "Certificación", "Exámenes Médicos"]
     )
-    rango_dias = st.sidebar.slider("Días hasta vencimiento máximo:", 0, 180, 30)
+    rango_dias = st.sidebar.slider("Días hasta vencimiento máximo:", 0, 365, 30)
 
     if busqueda:
         df_filtrado = df[
