@@ -7,39 +7,65 @@ from datetime import datetime
 # ============================
 @st.cache_data
 def cargar_datos(archivo):
-    df = pd.read_excel(
-        archivo,
-        sheet_name="PERSONAL",
-        header=2
-    )
-    df.columns = df.columns.str.strip()
+    try:
+        xls = pd.ExcelFile(archivo)
+        if "PERSONAL" not in xls.sheet_names:
+            st.error("⚠️ Este archivo Excel no es compatible ya que no tiene la hoja de PERSONAL.")
+            return None
+        df = pd.read_excel(
+            archivo,
+            sheet_name="PERSONAL",
+            header=2
+        )
+        df.columns = df.columns.str.strip()
 
-    columnas_interes = [
-        "NOMBRE", 
-        "ID", 
-        "FECHA INDUCCION", 
-        "VENCE.INDUCCION", 
-        "CERT-MAN.ALIMENTOS",
-        "VENCE.MANI.ALIM",
-        "EXAMENES MEDICOS",
-        "VENCIMIENTO.EX.MED",
-        "OPERACION"
-    ]
-    df = df[[col for col in columnas_interes if col in df.columns]]
+        columnas_interes = [
+            "NOMBRE", 
+            "ID", 
+            "FECHA INDUCCION", 
+            "VENCE.INDUCCION", 
+            "CERT-MAN.ALIMENTOS",
+            "VENCE.MANI.ALIM",
+            "EXAMENES MEDICOS",
+            "VENCIMIENTO.EX.MED",
+            "TRABAJADOR AUTORIZADO", 
+            "COORDINADOR DE ALTURAS",
+            "MANEJO DEFENSIVO",
+            "OPERARIOS DE MONTACARGAS",
+            "OPERACION"
+        ]
+        df = df[[col for col in columnas_interes if col in df.columns]]
 
-    df = df.rename(columns={
-        "NOMBRE": "Nombre",
-        "ID": "Documento",
-        "FECHA INDUCCION": "Fecha de Inducción",
-        "VENCE.INDUCCION": "Fecha de Vencimiento Inducción",
-        "CERT-MAN.ALIMENTOS": "Certificación de Alimentos",
-        "VENCE.MANI.ALIM": "Fecha de Vencimiento C.A",
-        "EXAMENES MEDICOS": "Exámenes Médicos",
-        "VENCIMIENTO.EX.MED": "Fecha de Vencimiento EX.MED",
-        "OPERACION": "Operación"
-    })
+        df = df.rename(columns={
+            "NOMBRE": "Nombre",
+            "ID": "Documento",
+            "FECHA INDUCCION": "Fecha de Inducción",
+            "VENCE.INDUCCION": "Fecha de Vencimiento Inducción",
+            "CERT-MAN.ALIMENTOS": "Certificación de Alimentos",
+            "VENCE.MANI.ALIM": "Fecha de Vencimiento C.A",
+            "EXAMENES MEDICOS": "Exámenes Médicos",
+            "VENCIMIENTO.EX.MED": "Fecha de Vencimiento EX.MED",
+            "TRABAJADOR AUTORIZADO": "Trabajador Autorizado",
+            "COORDINADOR DE ALTURAS": "Coordinador de Alturas",
+            "MANEJO DEFENSIVO": "Manejo Defensivo",
+            "OPERARIOS DE MONTACARGAS": "Operarios de Montacarga",
+            "OPERACION": "Operación"
+        })
 
-    return df
+        # Convertir columnas de fechas al tipo datetime
+        columnas_fecha = [
+            "Fecha de Inducción",
+            "Fecha de Vencimiento Inducción",
+            "Fecha de Vencimiento C.A",
+            "Fecha de Vencimiento EX.MED"
+        ]
+        for columna in columnas_fecha:
+            df[columna] = pd.to_datetime(df[columna], errors='coerce')
+
+        return df
+    except Exception as e:
+        st.error(f"⚠️ Error al cargar el archivo: {e}")
+        return None
 
 # ================================
 # 🚀 Configuración inicial de página
@@ -50,12 +76,19 @@ st.title("Control de Certificaciones, Exámenes Médicos e Inducción del Person
 # ======================================
 # 📄 Subida de archivo y guardado en sesión
 # ======================================
-if "df" not in st.session_state:
+if "archivo" not in st.session_state:
     archivo = st.file_uploader("Sube el archivo Excel", type=["xlsx"])
     if archivo is not None:
+        st.session_state.archivo = archivo
         st.session_state.df = cargar_datos(archivo)
 
-if "df" in st.session_state:
+if "archivo" in st.session_state:
+    archivo = st.session_state.archivo
+    if archivo is not None:
+        df = cargar_datos(archivo)
+        st.session_state.df = df
+
+if "df" in st.session_state and st.session_state.df is not None:
     df = st.session_state.df
     hoy = datetime.now()
 
@@ -72,15 +105,14 @@ if "df" in st.session_state:
         ["Inducción", "Certificación", "Exámenes Médicos"],
         default=["Inducción", "Certificación", "Exámenes Médicos"]
     )
-    rango_dias = st.sidebar.slider("Días hasta vencimiento máximo:", 0, 180, 30)
+    rango_dias = st.sidebar.slider("Días hasta vencimiento máximo:", 0, 365, 30)
 
+    df_filtrado = df.copy()
     if busqueda:
-        df_filtrado = df[
-            df['Nombre'].str.contains(busqueda, case=False, na=False) |
-            df['Documento'].astype(str).str.contains(busqueda, case=False, na=False)
+        df_filtrado = df_filtrado[
+            df_filtrado['Nombre'].str.contains(busqueda, case=False, na=False) |
+            df_filtrado['Documento'].astype(str).str.contains(busqueda, case=False, na=False)
         ]
-    else:
-        df_filtrado = df.copy()
 
     if operacion_seleccionada != "Todas":
         df_filtrado = df_filtrado[df_filtrado["Operación"] == operacion_seleccionada]
@@ -90,30 +122,29 @@ if "df" in st.session_state:
     # =======================
     # 🚨 Procesar Alertas
     # =======================
+    def procesar_alerta(fecha, categoria, nombre, lista_vencidos, lista_por_vencer):
+        if pd.notna(fecha):
+            if not isinstance(fecha, (pd.Timestamp, datetime)):
+                fecha = pd.to_datetime(str(fecha), dayfirst=True, errors='coerce')
+            if pd.notna(fecha):
+                dias_restantes = (fecha.date() - hoy.date()).days
+                if dias_restantes < 0:
+                    lista_vencidos.append(f"⚠️ {nombre} - {categoria} vencida hace {-dias_restantes} días")
+                elif dias_restantes <= rango_dias:
+                    lista_por_vencer.append(f"⏳ {nombre} - {categoria} vence en {dias_restantes} días")
+
     induccion_vencidas, induccion_por_vencer = [], []
     cert_vencidas, cert_por_vencer = [], []
     examenes_vencidos, examenes_por_vencer = [], []
 
     for index, row in df_filtrado.iterrows():
         nombre = row["Nombre"]
-
-        def procesar_alerta(fecha, categoria, lista_vencidos, lista_por_vencer):
-            if pd.notna(fecha):
-                if not isinstance(fecha, (pd.Timestamp, datetime)):
-                    fecha = pd.to_datetime(str(fecha), dayfirst=True, errors='coerce')
-                if pd.notna(fecha):
-                    dias_restantes = (fecha.date() - hoy.date()).days
-                    if dias_restantes < 0:
-                        lista_vencidos.append(f"⚠️ {nombre} - {categoria} vencida hace {-dias_restantes} días")
-                    elif dias_restantes <= rango_dias:
-                        lista_por_vencer.append(f"⏳ {nombre} - {categoria} vence en {dias_restantes} días")
-
         if "Inducción" in tipo_alerta:
-            procesar_alerta(row["Fecha de Vencimiento Inducción"], "Inducción", induccion_vencidas, induccion_por_vencer)
+            procesar_alerta(row["Fecha de Vencimiento Inducción"], "Inducción", nombre, induccion_vencidas, induccion_por_vencer)
         if "Certificación" in tipo_alerta:
-            procesar_alerta(row["Fecha de Vencimiento C.A"], "Certificación", cert_vencidas, cert_por_vencer)
+            procesar_alerta(row["Fecha de Vencimiento C.A"], "Certificación", nombre, cert_vencidas, cert_por_vencer)
         if "Exámenes Médicos" in tipo_alerta:
-            procesar_alerta(row["Fecha de Vencimiento EX.MED"], "Examen", examenes_vencidos, examenes_por_vencer)
+            procesar_alerta(row["Fecha de Vencimiento EX.MED"], "Examen", nombre, examenes_vencidos, examenes_por_vencer)
 
     # ======================
     # 📊 Resumen General
